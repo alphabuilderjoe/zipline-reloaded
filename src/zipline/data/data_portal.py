@@ -135,6 +135,7 @@ class DataPortal:
         first_trading_day,
         equity_daily_reader=None,
         equity_minute_reader=None,
+        equity_multi_timeframe_readers=None,  
         future_daily_reader=None,
         future_minute_reader=None,
         adjustment_reader=None,
@@ -282,6 +283,17 @@ class DataPortal:
             if self._first_trading_day is not None
             else None
         )
+
+        # Add support for multiple timeframe readers
+        self._equity_multi_timeframe_readers = equity_multi_timeframe_readers or {}
+
+        # Update the frequency validation
+        self._supported_frequencies = set(['daily', 'minute'])
+        self._supported_frequencies.update(self._equity_multi_timeframe_readers.keys())
+    
+
+
+
 
     def _ensure_reader_aligned(self, reader):
         if reader is None:

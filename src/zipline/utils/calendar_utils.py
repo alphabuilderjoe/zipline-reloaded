@@ -37,3 +37,29 @@ def get_calendar(*args, **kwargs):
 # Schedule columns now have timezone set as UTC
 # (whilst the times have always been defined in terms of UTC,
 # previously the dtype was timezone-naive).
+
+# Add new frequency constants
+DAILY = 'daily'
+MINUTE = 'minute'
+HOURLY = 'hourly'
+FOUR_HOUR = '4h'
+TWO_HOUR = '2h'
+THIRTY_MIN = '30m'
+FIFTEEN_MIN = '15m'
+FIVE_MIN = '5m'
+
+# Update the valid frequencies set
+VALID_DATA_FREQUENCIES = {DAILY, MINUTE, HOURLY, FOUR_HOUR, TWO_HOUR, 
+                         THIRTY_MIN, FIFTEEN_MIN, FIVE_MIN}
+
+# Add frequency to minutes mapping
+FREQUENCY_TO_MINUTES = {
+    MINUTE: 1,
+    FIVE_MIN: 5,
+    FIFTEEN_MIN: 15,
+    THIRTY_MIN: 30,
+    HOURLY: 60,
+    TWO_HOUR: 120,
+    FOUR_HOUR: 240,
+    DAILY: 390  # Assuming 6.5 hour trading day
+}
