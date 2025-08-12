@@ -38,21 +38,25 @@ def get_calendar(*args, **kwargs):
 # (whilst the times have always been defined in terms of UTC,
 # previously the dtype was timezone-naive).
 
-# Add new frequency constants
+# Add these constants at the module level (after existing imports)
+
+# Data frequency constants
 DAILY = 'daily'
 MINUTE = 'minute'
-HOURLY = 'hourly'
-FOUR_HOUR = '4h'
-TWO_HOUR = '2h'
-THIRTY_MIN = '30m'
-FIFTEEN_MIN = '15m'
 FIVE_MIN = '5m'
+FIFTEEN_MIN = '15m'
+THIRTY_MIN = '30m'
+HOURLY = '1h'
+TWO_HOUR = '2h'
+FOUR_HOUR = '4h'
 
-# Update the valid frequencies set
-VALID_DATA_FREQUENCIES = {DAILY, MINUTE, HOURLY, FOUR_HOUR, TWO_HOUR, 
-                         THIRTY_MIN, FIFTEEN_MIN, FIVE_MIN}
+# Valid frequencies set
+VALID_DATA_FREQUENCIES = {
+    DAILY, MINUTE, FIVE_MIN, FIFTEEN_MIN, 
+    THIRTY_MIN, HOURLY, TWO_HOUR, FOUR_HOUR
+}
 
-# Add frequency to minutes mapping
+# Map frequencies to minute counts
 FREQUENCY_TO_MINUTES = {
     MINUTE: 1,
     FIVE_MIN: 5,
@@ -61,5 +65,51 @@ FREQUENCY_TO_MINUTES = {
     HOURLY: 60,
     TWO_HOUR: 120,
     FOUR_HOUR: 240,
-    DAILY: 390  # Assuming 6.5 hour trading day
+    DAILY: 390  # 6.5 hour trading day
 }
+
+# Map string representations to internal constants
+FREQUENCY_STRINGS = {
+    '1m': MINUTE,
+    '5m': FIVE_MIN,
+    '15m': FIFTEEN_MIN,
+    '30m': THIRTY_MIN,
+    '1h': HOURLY,
+    '2h': TWO_HOUR,
+    '4h': FOUR_HOUR,
+    '1d': DAILY,
+    # Also support the internal format
+    'minute': MINUTE,
+    'daily': DAILY,
+    '5m': FIVE_MIN,
+    '15m': FIFTEEN_MIN,
+    '30m': THIRTY_MIN,
+    '1h': HOURLY,
+    '2h': TWO_HOUR,
+    '4h': FOUR_HOUR
+}
+
+def normalize_frequency(frequency):
+    """
+    Convert frequency string to internal constant.
+    
+    Parameters
+    ----------
+    frequency : str
+        Frequency string like '1m', '4h', '1d', 'minute', 'daily', etc.
+        
+    Returns
+    -------
+    str
+        The normalized internal frequency constant.
+        
+    Examples
+    --------
+    >>> normalize_frequency('1m')
+    'minute'
+    >>> normalize_frequency('4h')
+    '4h'
+    >>> normalize_frequency('1d')
+    'daily'
+    """
+    return FREQUENCY_STRINGS.get(frequency, frequency)
