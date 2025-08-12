@@ -24,7 +24,12 @@ import numpy as np
 
 from itertools import chain, repeat
 
-from zipline.utils.calendar_utils import get_calendar, days_at_time
+from zipline.utils.calendar_utils import (
+    get_calendar, 
+    days_at_time,
+    VALID_DATA_FREQUENCIES,
+    normalize_frequency
+)
 
 from zipline._protocol import handle_non_market_minutes
 from zipline.errors import (
@@ -168,8 +173,8 @@ class TradingAlgorithm:
     algo_filename : str, optional
         The filename for the algoscript. This will be used in exception
         tracebacks. default: '<string>'.
-    data_frequency : {'daily', 'minute'}, optional
-        The duration of the bars.
+    data_frequency : {'daily', 'minute', '5m', '15m', '30m', '1h', '2h', '4h'}, optional
+        The duration of the bars. Supports daily, minute, and various intraday frequencies.
     equities_metadata : dict or DataFrame or file-like object, optional
         If dict is provided, it must have the following structure:
         * keys are the identifiers
@@ -506,6 +511,26 @@ class TradingAlgorithm:
             else:
                 execution_opens = market_opens
                 execution_closes = market_closes
+        
+        elif self.sim_params.data_frequency in VALID_DATA_FREQUENCIES and self.sim_params.data_frequency not in ["minute", "daily"]:
+            # For other intraday frequencies (4h, 2h, 1h, 30m, 15m, 5m)
+            minutely_emission = self.sim_params.emission_rate == "minute"
+            
+            # Use the same logic as minute mode for now
+            # You may want to customize this based on the specific frequency
+            if self.trading_calendar.name == "us_futures":
+                execution_opens = self.trading_calendar.execution_time_from_open(
+                    market_opens
+                )
+                execution_closes = self.trading_calendar.execution_time_from_close(
+                    market_closes
+                )
+            else:
+                execution_opens = market_opens
+                execution_closes = market_closes
+            
+        
+        
         else:
             # in daily mode, we want to have one bar per session, timestamped
             # as the last minute of the session.
@@ -728,9 +753,9 @@ class TradingAlgorithm:
           The arena from the simulation parameters. This will normally
           be ``'backtest'`` but some systems may use this distinguish
           live trading from backtesting.
-        - data_frequency : {'daily', 'minute'}
-          data_frequency tells the algorithm if it is running with
-          daily data or minute data.
+        - data_frequency : str
+            data_frequency tells the algorithm what frequency of data it is
+            running with (e.g., 'daily', 'minute', '4h', '1h', etc.).
         - start : datetime
           The start date for the simulation.
         - end : datetime
@@ -1606,8 +1631,20 @@ class TradingAlgorithm:
 
     @data_frequency.setter
     def data_frequency(self, value):
-        assert value in ("daily", "minute")
-        self.sim_params.data_frequency = value
+        """Set the data frequency for the algorithm.
+        
+        Parameters
+        ----------
+        value : str
+            The data frequency. Valid values are in VALID_DATA_FREQUENCIES.
+        """
+        normalized_value = normalize_frequency(value)
+        if normalized_value not in VALID_DATA_FREQUENCIES:
+            raise ValueError(
+                f"Invalid data_frequency '{value}'. "
+                f"Valid options are: {', '.join(sorted(VALID_DATA_FREQUENCIES))}"
+            )
+        self.sim_params.data_frequency = normalized_value
 
     @api_method
     @disallowed_in_before_trading_start(OrderInBeforeTradingStart())

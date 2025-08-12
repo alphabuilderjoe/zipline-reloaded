@@ -56,6 +56,13 @@ from zipline.data.bar_reader import NoDataOnDate
 from zipline.utils.memoize import remember_last
 from zipline.errors import HistoryWindowStartsBeforeData
 
+from zipline.utils.calendar_utils import (
+    VALID_DATA_FREQUENCIES,
+    FREQUENCY_TO_MINUTES,
+    normalize_frequency,
+    DAILY, MINUTE
+)
+
 
 log = logging.getLogger("DataPortal")
 
@@ -450,7 +457,7 @@ class DataPortal:
                     field,
                     session_label,
                 )
-        else:
+        elif data_frequency == "minute":
             if field == "last_traded":
                 return self.get_last_traded_dt(asset, dt, "minute")
             elif field == "price":
@@ -464,6 +471,10 @@ class DataPortal:
                 return self._get_current_contract(asset, dt)
             else:
                 return self._get_minute_spot_value(asset, field, dt)
+        else:
+            # Handle multi-timeframe data
+            return self._get_multi_timeframe_spot_value(asset, field, dt, data_frequency)
+
 
     def get_spot_value(self, assets, field, dt, data_frequency):
         """Public API method that returns a scalar value representing the value
@@ -720,6 +731,37 @@ class DataPortal:
             asset, column, query_dt, dt, "minute", spot_value=result
         )
 
+    def _get_multi_timeframe_spot_value(self, asset, field, dt, frequency):
+        """Get spot value for multi-timeframe data."""
+        reader = self._equity_multi_timeframe_readers.get(frequency)
+        if reader is None:
+            raise ValueError(f"No reader configured for frequency '{frequency}'")
+        
+        if field == "last_traded":
+            if hasattr(reader, 'get_last_traded_dt'):
+                return reader.get_last_traded_dt(asset, dt)
+            else:
+                return pd.NaT
+        elif field == "price":
+            # For price, use close with forward fill
+            try:
+                value = reader.get_value(asset.sid, dt, "close")
+                if pd.isnull(value) and hasattr(reader, 'get_last_traded_dt'):
+                    # Try to get the last available value
+                    last_dt = reader.get_last_traded_dt(asset, dt)
+                    if not pd.isnull(last_dt):
+                        value = reader.get_value(asset.sid, last_dt, "close")
+                return value
+            except Exception:
+                return np.nan
+        else:
+            # For other fields, get the value directly
+            try:
+                return reader.get_value(asset.sid, dt, field)
+            except Exception:
+                return np.nan if field != "volume" else 0
+
+
     def _get_daily_spot_value(self, asset, column, dt):
         reader = self._get_pricing_reader("daily")
         if column == "last_traded":
@@ -877,7 +919,7 @@ class DataPortal:
             The number of bars desired.
 
         frequency: string
-            "1d" or "1m"
+            "1d", "1m", "5m", "15m", "30m", "1h", "2h", "4h", etc.
 
         field: string
             The desired field of the asset.
@@ -900,7 +942,10 @@ class DataPortal:
         if bar_count < 1:
             raise ValueError(f"bar_count must be >= 1, but got {bar_count}")
 
-        if frequency == "1d":
+        # Normalize the frequency (this should already be done by _protocol.pyx)
+        normalized_frequency = normalize_frequency(frequency) if frequency not in self._supported_frequencies else frequency
+
+        if normalized_frequency == "daily" or frequency == "1d":
             if field == "price":
                 df = self._get_history_daily_window(
                     assets, end_dt, bar_count, "close", data_frequency
@@ -909,72 +954,155 @@ class DataPortal:
                 df = self._get_history_daily_window(
                     assets, end_dt, bar_count, field, data_frequency
                 )
-        elif frequency == "1m":
+        elif normalized_frequency == "minute" or frequency == "1m":
             if field == "price":
                 df = self._get_history_minute_window(assets, end_dt, bar_count, "close")
             else:
                 df = self._get_history_minute_window(assets, end_dt, bar_count, field)
+        elif normalized_frequency in self._supported_frequencies:
+            # Handle multi-timeframe data
+            df = self._get_history_multi_timeframe_window(
+                assets, end_dt, bar_count, field, normalized_frequency, data_frequency
+            )
         else:
-            raise ValueError(f"Invalid frequency: {frequency}")
+            raise ValueError(
+                f"Invalid frequency: {frequency}. "
+                f"Supported frequencies are: {sorted(self._supported_frequencies)}"
+            )
 
         # forward-fill price
-        if field == "price":
-            if frequency == "1m":
+        if field == "price" and ffill:
+            if normalized_frequency in ["minute", "1m"]:
                 ffill_data_frequency = "minute"
-            elif frequency == "1d":
+            elif normalized_frequency in ["daily", "1d"]:
                 ffill_data_frequency = "daily"
             else:
-                raise Exception("Only 1d and 1m are supported for forward-filling.")
+                ffill_data_frequency = normalized_frequency
 
             assets_with_leading_nan = np.where(isnull(df.iloc[0]))[0]
 
-            history_start, history_end = df.index[[0, -1]]
-            if ffill_data_frequency == "daily" and data_frequency == "minute":
-                # When we're looking for a daily value, but we haven't seen any
-                # volume in today's minute bars yet, we need to use the
-                # previous day's ffilled daily price. Using today's daily price
-                # could yield a value from later today.
-                history_start -= self.trading_calendar.day
+            if len(assets_with_leading_nan) > 0:
+                history_start, history_end = df.index[[0, -1]]
+                if ffill_data_frequency == "daily" and data_frequency == "minute":
+                    # When we're looking for a daily value, but we haven't seen any
+                    # volume in today's minute bars yet, we need to use the
+                    # previous day's ffilled daily price. Using today's daily price
+                    # could yield a value from later today.
+                    history_start -= self.trading_calendar.day
 
-            initial_values = []
-            for asset in df.columns[assets_with_leading_nan]:
-                last_traded = self.get_last_traded_dt(
-                    asset,
-                    history_start,
-                    ffill_data_frequency,
-                )
-                if isnull(last_traded):
-                    initial_values.append(nan)
-                else:
-                    initial_values.append(
-                        self.get_adjusted_value(
-                            asset,
-                            field,
-                            dt=last_traded,
-                            perspective_dt=history_end,
-                            data_frequency=ffill_data_frequency,
-                        )
-                    )
-
-            # Set leading values for assets that were missing data, then ffill.
-            df.iloc[0, assets_with_leading_nan] = np.array(
-                initial_values, dtype=np.float64
-            )
-            df.ffill(inplace=True)
-
-            # forward-filling will incorrectly produce values after the end of
-            # an asset's lifetime, so write NaNs back over the asset's
-            # end_date.
-            normed_index = df.index.normalize()
-            for asset in df.columns:
-                if history_end >= asset.end_date.tz_localize(history_end.tzinfo):
-                    # if the window extends past the asset's end date, set
-                    # all post-end-date values to NaN in that asset's series
-                    df.loc[
-                        normed_index > asset.end_date.tz_localize(normed_index.tz),
+                initial_values = []
+                for asset in df.columns[assets_with_leading_nan]:
+                    last_traded = self.get_last_traded_dt(
                         asset,
-                    ] = nan
+                        history_start,
+                        ffill_data_frequency,
+                    )
+                    if isnull(last_traded):
+                        initial_values.append(nan)
+                    else:
+                        initial_values.append(
+                            self.get_adjusted_value(
+                                asset,
+                                field,
+                                dt=last_traded,
+                                perspective_dt=history_end,
+                                data_frequency=ffill_data_frequency,
+                            )
+                        )
+
+                # Set leading values for assets that were missing data, then ffill.
+                df.iloc[0, assets_with_leading_nan] = np.array(
+                    initial_values, dtype=np.float64
+                )
+                df.ffill(inplace=True)
+
+                # forward-filling will incorrectly produce values after the end of
+                # an asset's lifetime, so write NaNs back over the asset's
+                # end_date.
+                normed_index = df.index.normalize()
+                for asset in df.columns:
+                    if history_end >= asset.end_date.tz_localize(history_end.tzinfo):
+                        # if the window extends past the asset's end date, set
+                        # all post-end-date values to NaN in that asset's series
+                        df.loc[
+                            normed_index > asset.end_date.tz_localize(normed_index.tz),
+                            asset,
+                        ] = nan
         return df
+    
+
+    def _get_history_multi_timeframe_window(
+    self, assets, end_dt, bar_count, field_to_use, frequency, data_frequency
+):
+        """Internal method that returns a dataframe containing history bars
+        for multi-timeframe frequencies (4h, 2h, 1h, 30m, 15m, 5m).
+        """
+        reader = self._equity_multi_timeframe_readers.get(frequency)
+        if reader is None:
+            raise ValueError(
+                f"No reader configured for frequency '{frequency}'. "
+                f"Available frequencies: {sorted(self._supported_frequencies)}"
+            )
+        
+        # Calculate the window of bars we need
+        minutes_per_bar = FREQUENCY_TO_MINUTES.get(frequency, 240)  # default to 4h
+        
+        # Get the appropriate time window based on the frequency
+        if hasattr(reader, 'get_window'):
+            # If the reader has a get_window method, use it
+            window_data = reader.get_window(assets, end_dt, bar_count, field_to_use)
+        else:
+            # Otherwise, calculate the window ourselves
+            # This is a simplified approach - you may need to adjust based on your reader
+            trading_calendar = self.trading_calendar
+            
+            # Find the end session
+            end_session = trading_calendar.minute_to_session(end_dt)
+            
+            # Calculate how many sessions we need
+            # This is approximate - you may need more sophisticated logic
+            bars_per_day = 390 // minutes_per_bar  # 390 minutes in a trading day
+            sessions_needed = (bar_count // bars_per_day) + 2  # Add buffer
+            
+            # Get the sessions
+            sessions = trading_calendar.sessions_window(end_session, -sessions_needed)
+            
+            # Load the data
+            if hasattr(reader, 'load_raw_arrays'):
+                data = reader.load_raw_arrays(
+                    [field_to_use],
+                    sessions[0],
+                    end_dt,
+                    [asset.sid for asset in assets]
+                )
+                window_data = data[field_to_use]
+            else:
+                # Fallback to simple approach
+                window_data = []
+                for asset in assets:
+                    asset_data = []
+                    for i in range(bar_count):
+                        # This is a placeholder - implement based on your reader's API
+                        value = reader.get_value(asset.sid, end_dt - pd.Timedelta(minutes=i * minutes_per_bar), field_to_use)
+                        asset_data.append(value)
+                    window_data.append(asset_data[::-1])  # Reverse to get chronological order
+                window_data = np.array(window_data).T
+        
+        # Create appropriate index based on frequency
+        if hasattr(reader, 'get_index_for_window'):
+            index = reader.get_index_for_window(end_dt, bar_count)
+        else:
+            # Create a simple index
+            # This is approximate - adjust based on your needs
+            index = pd.date_range(
+                end=end_dt,
+                periods=bar_count,
+                freq=f'{minutes_per_bar}T'  # T for minutes
+            )
+            # Filter to only trading times
+            index = index[index.map(trading_calendar.is_open_on_minute)][-bar_count:]
+        
+        return pd.DataFrame(window_data, index=index, columns=assets)
 
     def _get_minute_window_data(self, assets, field, minutes_for_window):
         """Internal method that gets a window of adjusted minute data for an asset

@@ -98,16 +98,11 @@ src/zipline/_version.py
 *.code-workspace
 logs/
 src/zipline/_protocol.cp310-win_amd64.pyd
-.gitignore
 src/zipline/assets/_assets.cp310-win_amd64.pyd
-.gitignore
-.gitignore
 src/zipline/data/_adjustments.cp310-win_amd64.pyd
 src/zipline/data/_equities.cp310-win_amd64.pyd
 src/zipline/data/_minute_bar_internal.cp310-win_amd64.pyd
-.gitignore
 src/zipline/lib/rank.cp310-win_amd64.pyd
-.gitignore
 src/zipline/lib/_uint8window.cp310-win_amd64.pyd
 src/zipline/lib/_int64window.cp310-win_amd64.pyd
 src/zipline/lib/_float64window.cp310-win_amd64.pyd
@@ -117,5 +112,4 @@ src/zipline/finance/_finance_ext.cp310-win_amd64.pyd
 src/zipline/data/_resample.cp310-win_amd64.pyd
 src/zipline/assets/continuous_futures.cp310-win_amd64.pyd
 src/zipline/lib/_labelwindow.cp310-win_amd64.pyd
-.gitignore
 src/zipline/lib/adjustment.cp310-win_amd64.pyd

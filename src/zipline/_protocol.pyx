@@ -28,6 +28,13 @@ from zipline.assets._assets cimport Asset
 from zipline.assets.continuous_futures import ContinuousFuture
 from zipline.zipline_warnings import ZiplineDeprecationWarning
 
+from zipline.utils.calendar_utils import (
+    VALID_DATA_FREQUENCIES, 
+    normalize_frequency,
+    FREQUENCY_TO_MINUTES
+)
+
+
 cdef bool _is_iterable(obj):
     return isinstance(obj, Iterable) and not isinstance(obj, str)
 
@@ -544,16 +551,16 @@ cdef class BarData:
 
         Parameters
         ----------
-        assets: zipline.assets.Asset or iterable of zipline.assets.Asset
+        assets : zipline.assets.Asset or iterable of zipline.assets.Asset
             The asset(s) for which data is requested.
-        fields: string or iterable of string.
-            Requested data field(s). Valid field names are: "price",
+        fields : str or iterable[str]
+            Requested data field(s). Valid field names are: "price", 
             "last_traded", "open", "high", "low", "close", and "volume".
-        bar_count: int
+        bar_count : int
             Number of data observations requested.
-        frequency: str
-            String indicating whether to load daily or minutely data
-            observations. Pass '1m' for minutely data, '1d' for daily data.
+        frequency : str
+            String indicating data frequency.
+            Valid values: '1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'
 
         Returns
         -------
@@ -590,6 +597,8 @@ cdef class BarData:
 
         If the current simulation time is not a valid market time, we use the last market close instead.
         """
+        # ADD THIS LINE: Normalize frequency to internal format
+        normalized_frequency = normalize_frequency(frequency)
 
         single_field = isinstance(fields, str)
 
@@ -604,7 +613,7 @@ cdef class BarData:
                 asset_list,
                 self._get_current_minute(),
                 bar_count,
-                frequency,
+                normalized_frequency,
                 fields,
                 self.data_frequency,
             )
@@ -635,7 +644,7 @@ cdef class BarData:
                 field: self.data_portal.get_history_window(asset_list,
                                                            self._get_current_minute(),
                                                            bar_count,
-                                                           frequency,
+                                                           normalized_frequency,
                                                            field,
                                                            self.data_frequency,
                                                            ).loc[:, asset_list]
@@ -655,7 +664,7 @@ cdef class BarData:
                 df_dict = {field: df * adjs[field]
                            for field, df in df_dict.items()}
 
-            dt_label = 'date' if frequency == '1d' else 'date_time'
+            dt_label = 'date' if normalized_frequency == 'daily' else 'date_time'
             from zipline.utils.pandas_utils import stack_future_compatible
             df = (stack_future_compatible(
                       pd.concat(df_dict,
